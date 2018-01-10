@@ -1,0 +1,8 @@
+.cache
+.eggs
+.pytest_cache
+.vscode
+*.pyc
+build
+dist
+onnx_plaidml.egg-info
