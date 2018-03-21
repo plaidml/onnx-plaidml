@@ -234,8 +234,7 @@ class PlaidMLBackend(onnx.backend.base.Backend):
         func = tile.compose(
             cls.ctx,
             dev,
-            inputs=[(inp.name, bindings[inp.name])
-                    for inp in graph.input
+            inputs=[(inp.name, bindings[inp.name]) for inp in graph.input
                     if inp.name not in initializers],
             outputs=[(outp.name, bindings[outp.name]) for outp in graph.output])
 

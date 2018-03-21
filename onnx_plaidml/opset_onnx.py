@@ -249,18 +249,18 @@ class Convolution(tile.Operation):
             if not isinstance(entry, six.integer_types) or entry <= 0:
                 raise ValueError('Invalid dilation_rate: {}'.format(dilations))
         if kernel.shape.ndims != rank + 2:
-            raise ValueError(
-                'Convolution kernel shape inconsistent with input shape: ' +
-                '{} (rank {}) v {} (rank {})'.format(kernel.shape, kernel.shape.ndims - 2,
-                                                     data.shape, data.shape.ndims - 2))
+            raise ValueError('Convolution kernel shape inconsistent with input shape: ' +
+                             '{} (rank {}) v {} (rank {})'.format(
+                                 kernel.shape, kernel.shape.ndims - 2, data.shape,
+                                 data.shape.ndims - 2))
         if len(strides) != rank:
             raise ValueError('Convolution strides length inconsistent with input shape: ' +
-                             '{} (rank {}) v {} (rank {})'.format(strides, len(
-                                 strides), data.shape, data.shape.ndims - 2))
+                             '{} (rank {}) v {} (rank {})'.format(
+                                 strides, len(strides), data.shape, data.shape.ndims - 2))
         if len(dilations) != rank:
             raise ValueError('Convolution dilations length inconsistent with input shape: ' +
-                             '{} (rank {}) v {} (rank {})'.format(dilations, len(
-                                 dilations), data.shape, data.shape.ndims - 2))
+                             '{} (rank {}) v {} (rank {})'.format(
+                                 dilations, len(dilations), data.shape, data.shape.ndims - 2))
 
         conv_strs = _format_conv_strings(rank, data.shape.dims, kernel_shape, strides, padding,
                                          pads, dilations, group)
@@ -292,8 +292,8 @@ class LocalChannelSum(tile.Operation):
         }}""".format(
             dims=', '.join(['N', 'C'] + ['D{}'.format(i) for i in range(rank)]),
             out_idxs=', '.join(['n', 'c'] + ['d{}'.format(i) for i in range(rank)]),
-            in_idxs=', '.join(
-                ['n', 'c-{}+z'.format(distance)] + ['d{}'.format(i) for i in range(rank)]),
+            in_idxs=', '.join(['n', 'c-{}+z'.format(distance)] +
+                              ['d{}'.format(i) for i in range(rank)]),
             constraints=', z < {}'.format(size))
 
         super(LocalChannelSum, self).__init__(code, [('I', data)], [('O', data.shape)])
@@ -338,9 +338,8 @@ class PadConstant(tile.Operation):
                 out_dims=', '.join(out_dims),
                 in_idxs=', '.join(in_idxs),
                 out_idxs=', '.join(out_idxs))
-            value_input = [('One', tile.Value.from_var(1, tuple())), ('V',
-                                                                      tile.Value.from_var(
-                                                                          value, tuple()))]
+            value_input = [('One', tile.Value.from_var(1, tuple())), ('V', tile.Value.from_var(
+                value, tuple()))]
         else:
             code = """
             function (I[{in_dims}]) -> (O) {{
@@ -697,8 +696,7 @@ class _V1(object):
                 six.raise_from(ValueError('Unsupported padding mode: {}'.format(mode)), None)
         if not paddings or len(paddings) != 2 * data.shape.ndims:
             raise tile.LogicError('Inconsistant padding request; rank={}, #paddings={}'.format(
-                data.shape.ndims,
-                len(paddings) if paddings else 0))
+                data.shape.ndims, len(paddings) if paddings else 0))
 
         return (padding_mode.function(data, pads=paddings, mode=mode, value=value),)
 
@@ -825,8 +823,7 @@ class _V2(_V1):
                 six.raise_from(ValueError('Unsupported padding mode: {}'.format(mode)), None)
         if not pads or len(pads) != 2 * data.shape.ndims:
             raise tile.LogicError('Inconsistant padding request; rank={}, #pads={}'.format(
-                data.shape.ndims,
-                len(pads) if pads else 0))
+                data.shape.ndims, len(pads) if pads else 0))
 
         return (padding_mode.function(data, pads=pads, mode=mode, value=value),)
 
