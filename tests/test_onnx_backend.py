@@ -18,30 +18,27 @@ class BackendTest(onnx.backend.test.BackendTest):
 
     def __init__(self, backend, name):
         super(BackendTest, self).__init__(backend, name)
-        self.exclude('GLU')  # Requires Split
-        self.exclude('ReflectionPad2d_[gc]pu')  # Requires Pad(reflect)
-        self.exclude('ReplicationPad2d_[gc]pu')  # Requires Pad(edge)
-        self.exclude('edge_pad_[gc]pu')  # Requires Pad(edge)
-        self.exclude('reflect_pad_[gc]pu')  # Requires Pad(reflect)
 
-        if onnx.version.version == '1.0.0' or onnx.version.version == '1.0.1':
-            # ONNX changed the filename of the protobuf model description within their sample model
-            # packages, and uploaded the updated sample model packages, without updating the
-            # published wheels that used the old filename.  TL;DR: If you're using onnx <= 1.0.1,
-            # the following tests don't work, unless you go into your copy of
-            # onnx/backend/test/runner/__init__.py, look for the place where _add_model_test() uses
-            # the string 'model.pb', and change it to 'model.onnx'.  (That then causes other tests
-            # to break, so you don't want to comment these out; change them from 'exclude' to
-            # 'include', so that the other tests aren't run.)
-            self.exclude('bvlc_alexnet_[gc]pu')  # Requires compatible model
-            self.exclude('densenet121_[gc]pu')  # Requires compatible model
-            self.exclude('inception_v1_[gc]pu')  # Requires compatible model
-            self.exclude('inception_v2_[gc]pu')  # Requires compatible model
-            self.exclude('resnet50_[gc]pu')  # Requires compatible model
-            self.exclude('shufflenet_[gc]pu')  # Requires compatible model
-            self.exclude('squeezenet_[gc]pu')  # Requires compatible mode
-            self.exclude('vgg16_[gc]pu')  # Requires compatible model
-            self.exclude('vgg19_[gc]pu')  # Requires compatible model
+        # Unimplemented functionality
+        self.exclude('test_ReflectionPad2d_[gc]pu')  # Requires Pad(reflect)
+        self.exclude('test_ReplicationPad2d_[gc]pu')  # Requires Pad(edge)
+        self.exclude('test_edge_pad_[gc]pu')  # Requires Pad(edge)
+        self.exclude('test_reflect_pad_[gc]pu')  # Requires Pad(reflect)
+        self.exclude('test_gather_1_[gc]pu')  # Requires Gather on non-outermost axis
+        self.exclude('test_hardmax_one_hot_[gc]pu')  # Requires filtered Hardmax
+        self.exclude('test_top_k_[gc]pu')  # Requires TopK
+        self.exclude('test_Upsample_nearest_scale_2d_[gc]pu')  # Requires Upsample
+
+        # Needs to be debugged
+        self.exclude('test_operator_transpose_[gc]pu')
+
+        # These work, but they're slow, and they don't work if they're all together --
+        # likely due to holding onto temporary allocations on the GPU.
+        self.exclude('test_resnet50_[gc]pu')
+        self.exclude('test_inception_v1_[gc]pu')
+        self.exclude('test_inception_v2_[gc]pu')
+        self.exclude('test_vgg16_[gc]pu')
+        self.exclude('test_vgg19_[gc]pu')
 
     def _add_test(self, category, test_name, test_func, report_item, devices=None):
         if not devices:
