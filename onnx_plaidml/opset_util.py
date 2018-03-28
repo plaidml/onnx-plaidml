@@ -40,6 +40,20 @@ _ONNX_TENSOR_DATATYPE_TO_GETTER = {
     onnx_pb2.TensorProto.BOOL: operator.attrgetter('int32_data'),
 }
 
+_ONNX_TENSOR_DATATYPE_TO_UNPACK_TEMPLATE = {
+    onnx_pb2.TensorProto.FLOAT: '<{}f',
+    onnx_pb2.TensorProto.DOUBLE: '<{}d',
+    onnx_pb2.TensorProto.UINT8: '<{}B',
+    onnx_pb2.TensorProto.INT8: '<{}b',
+    onnx_pb2.TensorProto.UINT16: '<{}H',
+    onnx_pb2.TensorProto.INT16: '<{}h',
+    onnx_pb2.TensorProto.UINT32: '<{}I',
+    onnx_pb2.TensorProto.INT32: '<{}i',
+    onnx_pb2.TensorProto.UINT64: '<{}Q',
+    onnx_pb2.TensorProto.INT64: '<{}q',
+    onnx_pb2.TensorProto.BOOL: '<{}?',
+}
+
 
 def opset(domain, version):
     """Annotates a class as implementing an ONNX operator set.
@@ -56,14 +70,14 @@ def opset(domain, version):
     return _wrap
 
 
-def operator(name):
+def opset_op(name):
     """Annotates a method as implementing an ONNX operator.
 
-    N.B. If @operator is used with @staticmethod or @classmethod, make
-    sure that the @staticmethod or @classmethod wraps @operator, instead
+    N.B. If @opset_op is used with @staticmethod or @classmethod, make
+    sure that the @staticmethod or @classmethod wraps @opset_op, instead
     of the other way around.  The reason is that the ONNX-PlaidML backend
     applies the descriptor machinery when inspecting object attributes
-    for @operator annotations, so the @operator annotation must be applied
+    for @opset_op annotations, so the @opset_op annotation must be applied
     to the inner (actual function) object, not the descriptor.
 
     Args:
@@ -98,10 +112,11 @@ def onnx_tensor_to_plaidml_tensor(ctx, dev, tensor):
     var = plaidml.Tensor(dev, plaidml.Shape(ctx, dtype, *tensor.dims))
     with var.mmap_discard(ctx) as view:
         # TODO: Map ONNX datatypes to strings to use for conversion.
-        # Also, don't always use raw_data; use the typed proto data if available.
-        # ALso, precompile the structs.
+        # ALso, consider precompiling the structs.
         if tensor.raw_data:
-            view[:len(view)] = struct.unpack_from('<{}f'.format(len(view)), tensor.raw_data)
+            view[:len(view)] = struct.unpack_from(
+                _ONNX_TENSOR_DATATYPE_TO_UNPACK_TEMPLATE[tensor.data_type].format(len(view)),
+                tensor.raw_data)
         else:
             view[:len(view)] = _ONNX_TENSOR_DATATYPE_TO_GETTER[tensor.data_type](tensor)
         view.writeback()

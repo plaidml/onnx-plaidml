@@ -16,8 +16,9 @@ import struct
 import numpy as np
 import onnx.backend.base
 from onnx import onnx_pb2
+import onnx_plaidml
 from onnx_plaidml import opset_onnx
-import onnx_plaidml.opset_util as opset_util
+from onnx_plaidml import opset_util
 import plaidml
 import plaidml.tile as tile
 import six
@@ -210,7 +211,12 @@ class PlaidMLBackend(onnx.backend.base.Backend):
             device = list(cls.device_configs.keys())[0]
         super(PlaidMLBackend, cls).prepare(model, device, **kwargs)
         ops = _load_ops(model.opset_import)
-        dev = plaidml.Device(cls.ctx, cls.device_configs[device].config)
+        try:
+            config = cls.device_configs[device].config
+        except KeyError:
+            six.raise_from(
+                onnx_plaidml.DeviceNotFoundError(device, list(cls.device_configs.keys())), None)
+        dev = plaidml.Device(cls.ctx, config)
 
         bindings = {}
         graph = model.graph
@@ -234,8 +240,7 @@ class PlaidMLBackend(onnx.backend.base.Backend):
         func = tile.compose(
             cls.ctx,
             dev,
-            inputs=[(inp.name, bindings[inp.name])
-                    for inp in graph.input
+            inputs=[(inp.name, bindings[inp.name]) for inp in graph.input
                     if inp.name not in initializers],
             outputs=[(outp.name, bindings[outp.name]) for outp in graph.output])
 
