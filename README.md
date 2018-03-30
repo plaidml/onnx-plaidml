@@ -10,6 +10,8 @@ This package bridges between the two.  It consists of:
 
 ## Current Status
 
+[![Build Status](https://travis-ci.org/earhart/onnx-plaidml.svg?branch=master)](https://travis-ci.org/plaidml/onnx-plaidml)
+
 As of this release, we've implemented the operations required for the networks we focus on, operations whose definitions are relatively straightforward and unambiguous, and most of the operations exercised by the ONNX backend tests.  A number of operations aren't well-covered by the ONNX backend tests, and we haven't implemented our own tests for them (we think it'd be more useful to add them to ONNX); there may be bugs.
 
 We think we've implemented enough operations to be useful, but we know we're missing a few -- in particular, edge and reflection padding modes for convolutions.  If you run into any operations you need, please let us know -- or if you'd like to implement them, please see the section on [Development](#development).

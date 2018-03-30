@@ -1,0 +1,29 @@
+language: python
+os:
+  - linux
+  # Enable osx once Linux is working
+python:
+  - "2.7"
+  # Enable 3.5 once 2.7 is working
+
+dist: trusty
+sudo: required
+
+env:
+  global:
+    - PB_VERSION=2.6.1
+    - PLAIDML_DEVICE_IDS=opencl_cpu.0
+    - PLAIDML_EXPERIMENTAL=1
+    - PLAIDML_TELEMETRY=0
+
+before_install:
+  - ./.travis/before_install.sh
+
+script:
+  - python setup.py test
+
+cache:
+  - pip
+  - timeout: 600
+  - directories:
+    - $HOME/.cache
