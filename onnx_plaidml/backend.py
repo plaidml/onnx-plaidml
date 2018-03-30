@@ -20,6 +20,7 @@ import onnx_plaidml
 from onnx_plaidml import opset_onnx
 from onnx_plaidml import opset_util
 import plaidml
+import plaidml.settings
 import plaidml.tile as tile
 import six
 
@@ -87,23 +88,12 @@ _ONNX_ATTRTYPE_TO_GETTER = {
     onnx_pb2.AttributeProto.GRAPHS: operator.attrgetter('graphs'),
 }
 
-_DevConf = namedtuple('_DevConf', ['config', 'details'])
-
 
 def _get_device_configs(ctx):
     configs = {}
     type_indicies = {}
     for config in plaidml.devices(ctx):
-        details = json.loads(config.details)
-        ty = details['type']
-        if ty in type_indicies:
-            idx = type_indicies[ty] + 1
-            devid = '{}:{}'.format(ty, idx)
-        else:
-            idx = 0
-            devid = ty
-        type_indicies[ty] = idx
-        configs[devid] = _DevConf(config, details)
+        configs[config.id.decode()] = config
     return configs
 
 
@@ -150,6 +140,38 @@ class PlaidMLBackend(onnx.backend.base.Backend):
     ctx = plaidml.Context()
     device_configs = _get_device_configs(ctx)
     ops = opset_onnx.OPSETS
+
+    @classmethod
+    def prepare(cls, model, device=None, **kwargs):
+        if device is None:
+            device = cls._get_default_device()
+        return super(PlaidMLBackend, cls).prepare(model, device=device, **kwargs)
+
+    @classmethod
+    def run_model(cls, model, inputs, device=None, **kwargs):
+        if device is None:
+            device = cls._get_default_device()
+        return super(PlaidMLBackend, cls).run_model(model, device=device, **kwargs)
+
+    @classmethod
+    def run_node(cls, node, inputs, device=None, outputs_info=None, **kwargs):
+        if device is None:
+            device = cls._get_default_device()
+        return super(PlaidMLBackend, cls).run_node(
+            node, inputs, device=device, output_info=outputs_info, **kwargs)
+
+    @classmethod
+    def _get_default_device(cls):
+        device_ids = plaidml.settings.device_ids
+        if not device_ids:
+            six.raise_from(
+                onnx_plaidml.DeviceNotFoundError(None, list(cls.device_configs.keys())), None)
+        if len(device_ids) != 1:
+            six.raise_from(onnx_plaidml.TooManyDefaultDevicesError(device_ids), None)
+        if not cls.supports_device(device_ids[0]):
+            six.raise_from(
+                onnx_plaidml.DeviceNotFoundError(device_id, list(cls.device_configs.keys())), None)
+        return device_ids[0]
 
     @classmethod
     def _apply_node(cls, ops, node, bindings):
@@ -208,11 +230,11 @@ class PlaidMLBackend(onnx.backend.base.Backend):
     @classmethod
     def prepare(cls, model, device=None, **kwargs):
         if not device:
-            device = list(cls.device_configs.keys())[0]
+            device = cls._get_default_device()
         super(PlaidMLBackend, cls).prepare(model, device, **kwargs)
         ops = _load_ops(model.opset_import)
         try:
-            config = cls.device_configs[device].config
+            config = cls.device_configs[device]
         except KeyError:
             six.raise_from(
                 onnx_plaidml.DeviceNotFoundError(device, list(cls.device_configs.keys())), None)
@@ -249,9 +271,9 @@ class PlaidMLBackend(onnx.backend.base.Backend):
     @classmethod
     def run_node(cls, node, inputs, device=None):
         if not device:
-            device = list(cls.device_configs.keys())[0].config
+            device = cls._get_default_device()
         super(PlaidMLBackend, cls).run_node(node, inputs, device)
-        dev = plaidml.Device(cls.ctx, cls.device_configs[device].config)
+        dev = plaidml.Device(cls.ctx, cls.device_configs[device])
         try:
             bindings = {}
 
@@ -277,8 +299,8 @@ class PlaidMLBackend(onnx.backend.base.Backend):
             dev.close()
 
     @classmethod
-    def supports_device(cls, device):
-        return device in cls.device_configs
+    def supports_device(cls, device_id):
+        return device_id in cls.device_configs
 
 
 # Bind backend class methods.

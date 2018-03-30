@@ -20,25 +20,25 @@ class BackendTest(onnx.backend.test.BackendTest):
         super(BackendTest, self).__init__(backend, name)
 
         # Unimplemented functionality
-        self.exclude('test_ReflectionPad2d_[gc]pu')  # Requires Pad(reflect)
-        self.exclude('test_ReplicationPad2d_[gc]pu')  # Requires Pad(edge)
-        self.exclude('test_edge_pad_[gc]pu')  # Requires Pad(edge)
-        self.exclude('test_reflect_pad_[gc]pu')  # Requires Pad(reflect)
-        self.exclude('test_gather_1_[gc]pu')  # Requires Gather on non-outermost axis
-        self.exclude('test_hardmax_one_hot_[gc]pu')  # Requires filtered Hardmax
-        self.exclude('test_top_k_[gc]pu')  # Requires TopK
-        self.exclude('test_Upsample_nearest_scale_2d_[gc]pu')  # Requires Upsample
+        self.exclude('test_ReflectionPad2d_')  # Requires Pad(reflect)
+        self.exclude('test_ReplicationPad2d_')  # Requires Pad(edge)
+        self.exclude('test_edge_pad_')  # Requires Pad(edge)
+        self.exclude('test_reflect_pad_')  # Requires Pad(reflect)
+        self.exclude('test_gather_1_')  # Requires Gather on non-outermost axis
+        self.exclude('test_hardmax_one_hot_')  # Requires filtered Hardmax
+        self.exclude('test_top_k_')  # Requires TopK
+        self.exclude('test_Upsample_nearest_scale_2d_')  # Requires Upsample
 
         # Needs to be debugged
-        self.exclude('test_operator_transpose_[gc]pu')
+        self.exclude('test_operator_transpose_')
 
         # These work, but they're slow, and they don't work if they're all together --
         # likely due to holding onto temporary allocations on the GPU.
-        self.exclude('test_resnet50_[gc]pu')
-        self.exclude('test_inception_v1_[gc]pu')
-        self.exclude('test_inception_v2_[gc]pu')
-        self.exclude('test_vgg16_[gc]pu')
-        self.exclude('test_vgg19_[gc]pu')
+        self.exclude('test_resnet50_')
+        self.exclude('test_inception_v1_')
+        self.exclude('test_inception_v2_')
+        self.exclude('test_vgg16_')
+        self.exclude('test_vgg19_')
 
     def _add_test(self, category, test_name, test_func, report_item, devices=None):
         if not devices:

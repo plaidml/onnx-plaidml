@@ -24,5 +24,17 @@ class DeviceNotFoundError(Error):
             devmsg = 'the available devices are {}, and \'{}\''.format(
                 ', '.join(['\'{}\''.format(d)
                            for d in devices_available[:-1]]), devices_available[-1])
-        super(DeviceNotFoundError, self).__init__('Unable to find device \'{}\'; {}'.format(
-            device_name, devmsg))
+        if device_name:
+            msg = 'Unable to find device \'{}\'; {}'.format(device_name, devmsg)
+        else:
+            msg = 'No default device configured; {}'.format(devmsg)
+        super(DeviceNotFoundError, self).__init__(msg)
+
+
+class TooManyDefaultDevicesError(Error):
+
+    def __init__(self, device_ids):
+        self.device_ids = device_ids
+        super(TooManyDefaultDevicesError, self).__init__(
+            'Too many default devices specified (found: \'{}\'); run \'plaidml-setup\' to configure devices on this machine'.
+            format('\', \''.join(device_ids)))
