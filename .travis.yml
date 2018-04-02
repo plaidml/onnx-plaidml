@@ -4,7 +4,7 @@ os:
   # Enable osx once Linux is working
 python:
   - "2.7"
-  # Enable 3.5 once 2.7 is working
+  - "3.6"
 
 dist: trusty
 sudo: required
