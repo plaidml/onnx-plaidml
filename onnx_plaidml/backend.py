@@ -24,6 +24,17 @@ import plaidml.settings
 import plaidml.tile as tile
 import six
 
+
+def _as_input_id(name):
+    """Returns an identifier for an input name in a graph."""
+    return 'I' + name
+
+
+def _as_output_id(name):
+    """Returns an identifier for an output name in a graph."""
+    return 'O' + name
+
+
 # The opsets known to the backend.
 #
 # Each opset is an object that's been decorated by onnx_plaidml.opset.opset_id;
@@ -123,13 +134,13 @@ class PlaidMLBackendRep(onnx.backend.base.BackendRep):
         # TODO: Use the datatype from the model.
         for inp, valinfo in zip(inputs, self._input_valinfos):
             val = tile.Value.from_python_value(inp, ctx=self._ctx, dev=self._dev).var
-            self._invoker.set_input(valinfo.name, val)
+            self._invoker.set_input(_as_input_id(valinfo.name), val)
         outputs = []
         for valinfo in self._model.graph.output:
-            shape = self._invoker.get_output_shape(valinfo.name)
+            shape = self._invoker.get_output_shape(_as_output_id(valinfo.name))
             output = plaidml.Tensor(self._dev, shape)
             outputs.append(output)
-            self._invoker.set_output(valinfo.name, output)
+            self._invoker.set_output(_as_output_id(valinfo.name), output)
 
         self._invoker.invoke()
 
@@ -262,9 +273,9 @@ class PlaidMLBackend(onnx.backend.base.Backend):
         func = tile.compose(
             cls.ctx,
             dev,
-            inputs=[(inp.name, bindings[inp.name]) for inp in graph.input
+            inputs=[(_as_input_id(inp.name), bindings[inp.name]) for inp in graph.input
                     if inp.name not in initializers],
-            outputs=[(outp.name, bindings[outp.name]) for outp in graph.output])
+            outputs=[(_as_output_id(outp.name), bindings[outp.name]) for outp in graph.output])
 
         return PlaidMLBackendRep(model, cls.ctx, dev, func, input_valinfos)
 
@@ -283,13 +294,19 @@ class PlaidMLBackend(onnx.backend.base.Backend):
             cls._apply_node(_load_ops(), node, bindings)
 
             func = tile.compose(
-                cls.ctx, dev, inputs=[], outputs=[(name, bindings[name]) for name in node.output])
+                cls.ctx,
+                dev,
+                inputs=[],
+                outputs=[(_as_output_id(name), bindings[name]) for name in node.output])
 
             invoker = plaidml.Invoker(cls.ctx, func)
 
-            tensors = [plaidml.Tensor(dev, invoker.get_output_shape(name)) for name in node.output]
+            tensors = [
+                plaidml.Tensor(dev, invoker.get_output_shape(_as_output_id(name)))
+                for name in node.output
+            ]
             for (name, tensor) in zip(node.output, tensors):
-                invoker.set_output(name, tensor)
+                invoker.set_output(_as_output_id(name), tensor)
 
             invoker.invoke()
 
