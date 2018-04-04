@@ -11,6 +11,7 @@ This package bridges between the two.  It consists of:
 ## Current Status
 
 [![Build Status](https://travis-ci.org/plaidml/onnx-plaidml.svg?branch=master)](https://travis-ci.org/plaidml/onnx-plaidml)
+[![Build status](https://ci.appveyor.com/api/projects/status/7jhi5qypk9pmnwte?svg=true)](https://ci.appveyor.com/project/earhart/onnx-plaidml)
 
 As of this release, we've implemented the operations required for the networks we focus on, operations whose definitions are relatively straightforward and unambiguous, and most of the operations exercised by the ONNX backend tests.  A number of operations aren't well-covered by the ONNX backend tests, and we haven't implemented our own tests for them (we think it'd be more useful to add them to ONNX); there may be bugs.
 
