@@ -1,13 +1,23 @@
 language: python
-os:
-  - linux
-  # Enable osx once Linux is working
-python:
-  - "2.7"
-  - "3.6"
 
-dist: trusty
-sudo: required
+matrix:
+  include:
+    - os: linux
+      dist: trusty
+      sudo: required
+      python: "3.6"
+      env: PYTHON=python PIP=pip
+    - os: linux
+      dist: trusty
+      sudo: required
+      python: "2.7"
+      env: PYTHON=python PIP=pip
+    - os: osx
+      language: generic
+      env: PYTHON=python2 PIP=pip2
+    - os: osx
+      language: generic
+      env: PYTHON=python3 PIP=pip3
 
 env:
   global:
@@ -19,8 +29,11 @@ env:
 before_install:
   - ./.travis/before_install.sh
 
+install:
+  - $PIP install -r requirements.txt
+
 script:
-  - python setup.py test
+  - $PYTHON setup.py test
 
 cache:
   - pip

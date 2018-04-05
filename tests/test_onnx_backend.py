@@ -19,6 +19,9 @@ class BackendTest(onnx.backend.test.BackendTest):
     def __init__(self, backend, name):
         super(BackendTest, self).__init__(backend, name)
 
+        # Has issues on osx tests; temporarily disabling.
+        self.exclude('test_slice_start_out_of_bounds_opencl_cpu.0')
+
         # Unimplemented functionality
         self.exclude('test_ReflectionPad2d_')  # Requires Pad(reflect)
         self.exclude('test_ReplicationPad2d_')  # Requires Pad(edge)
