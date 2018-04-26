@@ -2,6 +2,7 @@
 
 import json
 import os
+import platform
 import unittest
 
 import onnx
@@ -19,8 +20,15 @@ class BackendTest(onnx.backend.test.BackendTest):
     def __init__(self, backend, name):
         super(BackendTest, self).__init__(backend, name)
 
-        # Has issues on osx tests; temporarily disabling.
-        self.exclude('test_slice_start_out_of_bounds_opencl_cpu.0')
+        if platform.system() == 'Darwin':
+            # Has issues on osx tests; temporarily disabling.
+            self.exclude('test_slice_start_out_of_bounds_opencl_cpu.0')
+
+            # These run, but have accuracy issues on osx CPU.
+            self.exclude('test_densenet121_opencl_cpu.0')
+            self.exclude('test_shufflenet_opencl_cpu.0')
+            self.exclude('test_resnet50_opencl_cpu.0')
+            self.exclude('test_inception_v2_opencl_cpu.0')
 
         # Unimplemented functionality
         self.exclude('test_ReflectionPad2d_')  # Requires Pad(reflect)
@@ -32,23 +40,7 @@ class BackendTest(onnx.backend.test.BackendTest):
         self.exclude('test_top_k_')  # Requires TopK
         self.exclude('test_Upsample_nearest_scale_2d_')  # Requires Upsample
 
-        # Needs to be debugged
-        self.exclude('test_GLU_opencl_cpu.0')
-        self.exclude('test_GLU_dim_opencl_cpu.0')
-        self.exclude('test_Softplus_opencl_cpu.0')
-        self.exclude('test_Softmin_opencl_cpu.0')
-        self.exclude('test_bvlc_alexnet_opencl_cpu.0')
-        self.exclude('test_densenet121_opencl_cpu.0')
-        self.exclude('test_shufflenet_opencl_cpu.0')
-        self.exclude('test_squeezenet_opencl_cpu.0')
-        self.exclude('test_operator_chunk_opencl_cpu.0')
-        self.exclude('test_operator_transpose_')
-
-        # These work, but they're slow, and they don't work if they're all together --
-        # likely due to holding onto temporary allocations on the GPU.
-        self.exclude('test_resnet50_')
-        self.exclude('test_inception_v1_')
-        self.exclude('test_inception_v2_')
+        # These work, but they're slow, and cause problems on Travis.
         self.exclude('test_vgg16_')
         self.exclude('test_vgg19_')
 
