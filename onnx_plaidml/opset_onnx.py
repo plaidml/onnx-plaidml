@@ -8,7 +8,7 @@ import operator
 import six
 import sys
 
-from onnx import onnx_pb2
+from onnx import onnx_pb
 import onnx_plaidml.opset_util as opset_util
 from onnx_plaidml.opset_util import opset, opset_op
 import plaidml
@@ -25,7 +25,7 @@ class Constant(tile.Operation):
         """Initialize the Constant tensor operation.
         
         Args:
-            value (onnx_pb2.TensorProto): The tensor to construct.
+            value (onnx_pb.TensorProto): The tensor to construct.
         """
         self.value = value
         try:
@@ -34,7 +34,7 @@ class Constant(tile.Operation):
             six.raise_from(
                 NotImplementedError(
                     'ONNX data type {} is not yet implemented by the PlaidML ONNX backend'.format(
-                        onnx_pb2.TensorProto.DataType.Name(value.data_type))), None)
+                        onnx_pb.TensorProto.DataType.Name(value.data_type))), None)
         super(Constant, self).__init__(None, [], [('O', outshape)])
 
     def bind(self, bindings):
@@ -278,6 +278,55 @@ class Convolution(tile.Operation):
         super(Convolution, self).__init__(code, [('I', data), ('K', kernel)], [('O', outshape)])
 
 
+class Gemm(tile.Operation):
+    """
+    Implements a general matrix multiplication.
+    """
+
+    def __init__(self, a, b, c, alpha=None, beta=None, broadcast=True, transA=False, transB=False):
+        if not broadcast and c.shape.ndims != 2:
+            raise NotImplementedError(
+                'Gemm without multiplier broadcast requires a two-dimensional scalar multiplier; multiplier rank={}'.
+                format(c.shape.ndims))
+
+        def gemm_reshape(value):
+            if value.shape.ndims < 2:
+                raise tile.LogicError(
+                    'Invalid Gemm input; two-dimensions required, got: {}'.format(value.shape))
+            if value.shape.ndims == 2:
+                return value
+            newdims = (value.shape.dims[0], functools.reduce(lambda x, y: x * y,
+                                                             value.shape.dims[1:]))
+            return op.reshape(value, newdims)
+
+        a = gemm_reshape(a)
+        b = gemm_reshape(b)
+
+        code = """
+        function (A[{a_dims}], B[{b_dims}], C) -> (O) {{
+          OM[row, col : ROW, COL] = +(A[{a_idxs}] * B[{b_idxs}]);
+          OA = {alpha_expr};
+          CB = {beta_expr};
+          O = OA + CB;
+        }}""".format(
+            a_dims='MID, ROW' if transA else 'ROW, MID',
+            b_dims='COL, MID' if transB else 'MID, COL',
+            a_idxs='mid, row' if transA else 'row, mid',
+            b_idxs='col, mid' if transB else 'mid, col',
+            alpha_expr='OM * {}'.format(alpha) if alpha else 'OM',
+            beta_expr='C * {}'.format(beta) if beta else 'C',
+        )
+
+        outshape = tile.Shape(
+            tile.common_dtype(a.shape.dtype, b.shape.dtype, c.shape.dtype),
+            tile.broadcast_dims((
+                a.shape.dims[1] if transA else a.shape.dims[0],
+                b.shape.dims[0] if transB else b.shape.dims[1],
+            ), c.shape.dims))
+
+        super(Gemm, self).__init__(code, [('A', a), ('B', b), ('C', c)], [('O', outshape)])
+
+
 class LocalChannelSum(tile.Operation):
     """
     Implements a localized sum over channels, used for local response normalization.
@@ -320,6 +369,20 @@ class Mean(tile.Operation):
             tile.broadcast_dims(*[t.shape.dims for t in tensors]))
 
         super(Mean, self).__init__(code, list(zip(tnames, tensors)), [('O', outshape)])
+
+
+class Not(tile.Operation):
+    """
+    Computes the elementwise logical not of a value.
+    """
+
+    def __init__(self, x):
+        if x.shape.dtype != plaidml.DType.BOOLEAN:
+            raise tile.LogicError('Logical Not requires a boolean tensor input')
+        super(Not, self).__init__("""
+            function (I) -> (O) {
+                O = cmp_eq(I, 0);
+            } """, [('I', x)], [('O', x.shape)])
 
 
 class Flatten(tile.Operation):
@@ -418,6 +481,18 @@ class Selu(tile.Operation):
         super(Selu, self).__init__(code, [('X', data)], [('Y', data.shape)])
 
 
+class Sqrt(tile.Operation):
+    """
+    Computes the elementwise square root of a value.
+    """
+
+    def __init__(self, x):
+        super(Sqrt, self).__init__("""
+            function (I) -> (O) {
+                O = sqrt(I);
+            } """, [('I', x)], [('O', x.shape)])
+
+
 class ThresholdedRelu(tile.Operation):
     """
     Implements a thresholded relu.
@@ -471,12 +546,12 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Abs')
-    def abs(data):
+    def abs(unused_ctx, data):
         return (abs(data),)
 
     @staticmethod
     @opset_op('Add')
-    def add(a, b, axis=None, broadcast=None):
+    def add(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in addition')
         if broadcast and (axis is not None):
@@ -485,16 +560,17 @@ class _V1(object):
 
     @staticmethod
     @opset_op('And')
-    def and_op(a, b, axis=None, broadcast=None):
+    def and_op(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in logical and')
         if broadcast and (axis is not None):
             b = op.reshape(b, list(b.shape.dims) + ([1] * (a.shape.ndims - b.shape.ndims - axis)))
-        return (tile.binary_op(a, b, 'L ? R : 0', dtype=plaidml.DType.BOOLEAN, name='And'),)
+        return (tile.binary_op(
+            a, b, 'cmp_eq(L ? R : 0, 1)', dtype=plaidml.DType.BOOLEAN, name='And'),)
 
     @staticmethod
     @opset_op('ArgMax')
-    def argmax(data, axis=-1, keepdims=1):
+    def argmax(unused_ctx, data, axis=-1, keepdims=1):
         if not keepdims:
             raise NotImplementedError(
                 'ArgMax with keepdims=0 is not yet implemented by the PlaidML ONNX backend')
@@ -502,7 +578,7 @@ class _V1(object):
 
     @staticmethod
     @opset_op('ArgMin')
-    def argmin(data, axis=-1, keepdims=1):
+    def argmin(unused_ctx, data, axis=-1, keepdims=1):
         if not keepdims:
             raise NotImplementedError(
                 'ArgMin with keepdims=0 is not yet implemented by the PlaidML ONNX backend')
@@ -510,14 +586,15 @@ class _V1(object):
 
     @staticmethod
     @opset_op('AveragePool')
-    def average_pool(data, auto_pad=None, kernel_shape=None, pads=None, strides=None):
+    def average_pool(unused_ctx, data, auto_pad=None, kernel_shape=None, pads=None, strides=None):
         padding = _convert_auto_pad(auto_pad, pads)
         return (op.average_pool(
             data, padding=padding, kernel_shape=kernel_shape, pads=pads, strides=strides),)
 
     @staticmethod
     @opset_op('BatchNormalization')
-    def batch_normalization(value,
+    def batch_normalization(unused_ctx,
+                            value,
                             scale,
                             bias,
                             mean,
@@ -541,23 +618,24 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Cast')
-    def cast(x, to):
-        dtype = opset_util.ONNX_DTYPE_TO_PLAIDML[onnx_pb2.TensorProto.DataType.Value(to.decode('utf-8'))]
+    def cast(unused_ctx, x, to):
+        dtype = opset_util.ONNX_DTYPE_TO_PLAIDML[onnx_pb.TensorProto.DataType.Value(
+            to.decode('utf-8'))]
         return (op.cast(x, dtype),)
 
     @staticmethod
     @opset_op('Ceil')
-    def ceil(x):
+    def ceil(unused_ctx, x):
         return (op.ceiling(x),)
 
     @staticmethod
     @opset_op('Clip')
-    def clip(x, min=None, max=None):
+    def clip(unused_ctx, x, min=None, max=None):
         return (op.clip(x, min_val=min, max_val=max),)
 
     @staticmethod
     @opset_op('Concat')
-    def concat(*inputs, **kwargs):
+    def concat(unused_ctx, *inputs, **kwargs):
         try:
             axis = kwargs['axis']
         except KeyError:
@@ -566,12 +644,13 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Constant')
-    def constant(value=None):
+    def constant(unused_ctx, value=None):
         return (Constant.function(value=value),)
 
     @staticmethod
     @opset_op('Conv')
-    def convolution(data,
+    def convolution(unused_ctx,
+                    data,
                     kernel,
                     bias=None,
                     auto_pad=None,
@@ -596,7 +675,7 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Div')
-    def div(a, b, axis=None, broadcast=None):
+    def div(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in division')
         if broadcast and (axis is not None):
@@ -605,19 +684,19 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Dropout')
-    def dropout(data, is_test=0, ratio=0.5):
+    def dropout(unused_ctx, data, is_test=0, ratio=0.5):
         if is_test:
             return (data,)
         raise NotImplementedError('Dropout in training mode is not currently implemented')
 
     @staticmethod
     @opset_op('Elu')
-    def elu(data, alpha=1.0):
+    def elu(unused_ctx, data, alpha=1.0):
         return (op.elu(data, alpha),)
 
     @staticmethod
     @opset_op('Equal')
-    def equal(a, b, axis=None, broadcast=None):
+    def equal(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in equal')
         if broadcast and (axis is not None):
@@ -626,22 +705,22 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Exp')
-    def exp(data):
+    def exp(unused_ctx, data):
         return (op.exp(data),)
 
     @staticmethod
     @opset_op('Flatten')
-    def flatten(x, axis=1):
+    def flatten(unused_ctx, x, axis=1):
         return (Flatten.function(x, axis),)
 
     @staticmethod
     @opset_op('Floor')
-    def floor(x):
+    def floor(unused_ctx, x):
         return (op.floor(x),)
 
     @staticmethod
     @opset_op('Gather')
-    def gather(data, indicies, axis=0):
+    def gather(unused_ctx, data, indicies, axis=0):
         if axis != 0:
             raise NotImplementedError(
                 'Gather with a non-zero axis is not yet implemented by the PlaidML ONNX backend')
@@ -653,13 +732,21 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Gemm')
-    def gemm(a, b, c, alpha=None, beta=None, broadcast=True, transA=False, transB=False):
-        return (op.gemm(
+    def gemm(unused_ctx,
+             a,
+             b,
+             c,
+             alpha=None,
+             beta=None,
+             broadcast=True,
+             transA=False,
+             transB=False):
+        return (Gemm.function(
             a, b, c, alpha=alpha, beta=beta, broadcast=broadcast, transA=transA, transB=transB),)
 
     @staticmethod
     @opset_op('GlobalAveragePool')
-    def global_average_pool(x):
+    def global_average_pool(unused_ctx, x):
         return (op.average_pool(
             x,
             padding=op.AutoPadding.VALID,
@@ -669,7 +756,7 @@ class _V1(object):
 
     @staticmethod
     @opset_op('GlobalMaxPool')
-    def global_max_pool(x):
+    def global_max_pool(unused_ctx, x):
         return (op.max_pool(
             x,
             padding=op.AutoPadding.VALID,
@@ -679,7 +766,7 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Greater')
-    def greater(a, b, axis=None, broadcast=None):
+    def greater(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in logical > comparison')
         if broadcast and (axis is not None):
@@ -688,22 +775,39 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Hardmax')
-    def hardmax(data, axis=None):
+    def hardmax(unused_ctx, data, axis=None):
         return (op.hardmax(data, axis=axis),)
 
     @staticmethod
     @opset_op('HardSigmoid')
-    def hardsigmoid(x, alpha=.2, beta=.5):
+    def hardsigmoid(unused_ctx, x, alpha=.2, beta=.5):
         return (tile.maximum(0., tile.minimum(1., alpha * x + beta)),)
 
     @staticmethod
+    @opset_op('Identity')
+    def identity(unused_ctx, x):
+        return (x,)
+
+    @staticmethod
+    @opset_op('InstanceNormalization')
+    def instance_normalization(unused_ctx, value, scale, bias, epsilon=1e-5):
+        shape = [value.shape.dims[1]] + ([1] * (value.shape.ndims - 2))
+        scale = op.reshape(scale, shape)
+        bias = op.reshape(bias, shape)
+        mean = op.mean(value, axes=list(range(2, value.shape.ndims)), keepdims=True)
+        variance = op.variance(value, axes=list(range(2, value.shape.ndims)), keepdims=True)
+
+        denom = op.sqrt(variance + epsilon)
+        return (((value - mean) * scale / denom) + bias,)
+
+    @staticmethod
     @opset_op('LeakyRelu')
-    def leaky_relu(x, alpha=0.01):
+    def leaky_relu(unused_ctx, x, alpha=0.01):
         return (op.relu(x, alpha),)
 
     @staticmethod
     @opset_op('Less')
-    def less(a, b, axis=None, broadcast=None):
+    def less(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in logical < comparison')
         if broadcast and (axis is not None):
@@ -712,40 +816,40 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Log')
-    def log(x):
+    def log(unused_ctx, x):
         return (op.log(x),)
 
     @staticmethod
     @opset_op('LogSoftmax')
-    def log_softmax(x, axis=None):
+    def log_softmax(unused_ctx, x, axis=None):
         return (op.log_softmax(x, axis),)
 
     @staticmethod
     @opset_op('LRN')
-    def lrn(data, alpha, beta, size, bias=1.):
+    def lrn(unused_ctx, data, alpha, beta, size, bias=1.):
         local_sums = LocalChannelSum.function(data * data, size)
         return (data / op.pow(bias + ((alpha / size) * local_sums), beta),)
 
     @staticmethod
     @opset_op('MatMul')
-    def matmul(lhs, rhs):
+    def matmul(unused_ctx, lhs, rhs):
         return (op.matmul(lhs, rhs),)
 
     @staticmethod
     @opset_op('Max')
-    def max(*tensors):
+    def max(unused_ctx, *tensors):
         return (functools.reduce(lambda x, y: op.maximum(x, y), tensors),)
 
     @staticmethod
     @opset_op('MaxPool')
-    def max_pool(data, auto_pad=None, kernel_shape=None, pads=None, strides=None):
+    def max_pool(unused_ctx, data, auto_pad=None, kernel_shape=None, pads=None, strides=None):
         padding = _convert_auto_pad(auto_pad, pads)
         return (op.max_pool(
             data, padding=padding, kernel_shape=kernel_shape, pads=pads, strides=strides),)
 
     @staticmethod
     @opset_op('Mean')
-    def mean(*tensors):
+    def mean(unused_ctx, *tensors):
         if len(tensors) == 0:
             raise tile.LogicError('Must supply at least one tensor in a Mean operation')
         if len(tensors) == 1:
@@ -754,12 +858,12 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Min')
-    def min(*tensors):
+    def min(unused_ctx, *tensors):
         return (functools.reduce(lambda x, y: op.minimum(x, y), tensors),)
 
     @staticmethod
     @opset_op('Mul')
-    def mul(a, b, axis=None, broadcast=None):
+    def mul(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in multiplication')
         if broadcast and (axis is not None):
@@ -768,35 +872,34 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Neg')
-    def neg(value):
+    def neg(unused_ctx, value):
         return (-value,)
 
     @staticmethod
     @opset_op('Not')
-    def not_op(value):
-        if value.shape.dtype == plaidml.DType.BOOLEAN:
-            return (1 - value,)
-        return (0.0 - value,)
+    def not_op(unused_ctx, value):
+        return (Not.function(value),)
 
     @staticmethod
     @opset_op('Or')
-    def or_op(a, b, axis=None, broadcast=None):
+    def or_op(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in logical or')
         if broadcast and (axis is not None):
             b = op.reshape(b, list(b.shape.dims) + ([1] * (a.shape.ndims - b.shape.ndims - axis)))
-        return (tile.binary_op(a, b, 'L ? 1 : R', dtype=plaidml.DType.BOOLEAN, name='Or'),)
+        return (tile.binary_op(
+            a, b, 'cmp_eq(L ? 1 : R, 1)', dtype=plaidml.DType.BOOLEAN, name='Or'),)
 
     @staticmethod
     @opset_op('PRelu')
-    def prelu(x, slope):
+    def prelu(unused_ctx, x, slope):
         if slope.shape.ndims == 1 and x.shape.ndims > 2:
             slope = op.reshape(slope, [slope.shape.dims[0]] + [1] * (x.shape.ndims - 2))
         return (op.relu(x, alpha=slope),)
 
     @staticmethod
     @opset_op('Pad')
-    def pad(data, mode=None, paddings=None, value=None):
+    def pad(unused_ctx, data, mode=None, paddings=None, value=None):
         if not mode:
             mode = 'constant'
             padding_mode = PadConstant
@@ -813,7 +916,7 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Pow')
-    def pow(data, exponent, axis=None, broadcast=None):
+    def pow(unused_ctx, data, exponent, axis=None, broadcast=None):
         if not broadcast and data.shape.dims != exponent.shape.dims:
             raise tile.LogicError('Incompatible shapes in power')
         if broadcast and (axis is not None):
@@ -824,66 +927,160 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Reciprocal')
-    def reciprocal(data):
+    def reciprocal(unused_ctx, data):
         return (1. / data,)
 
     @staticmethod
     @opset_op('Relu')
-    def relu(data):
+    def relu(unused_ctx, data):
         return (op.relu(data),)
 
     @staticmethod
     @opset_op('Reshape')
-    def reshape(data, shape=None):
+    def reshape(unused_ctx, data, shape=None):
         if not shape:
             raise tile.LogicError('Reshape requires a target shape')
         return (op.reshape(data, shape),)
 
     @staticmethod
+    @opset_op('ReduceL1')
+    def reduce_l1(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.summation(abs(data), axes=axes, keepdims=keepdims),)
+
+    @staticmethod
+    @opset_op('ReduceL2')
+    def reduce_l2(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.sqrt(op.summation(data * data, axes=axes, keepdims=keepdims)),)
+
+    @staticmethod
+    @opset_op('ReduceLogSum')
+    def reduce_log_sum(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.log(op.summation(data, axes=axes, keepdims=keepdims)),)
+
+    @staticmethod
+    @opset_op('ReduceLogSumExp')
+    def reduce_log_sum_exp(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.log(op.summation(op.exp(data), axes=axes, keepdims=keepdims)),)
+
+    @staticmethod
+    @opset_op('ReduceMax')
+    def reduce_max(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.max_reduce(data, axes=axes, keepdims=keepdims),)
+
+    @staticmethod
+    @opset_op('ReduceMean')
+    def reduce_mean(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.mean(data, axes=axes, keepdims=keepdims),)
+
+    @staticmethod
+    @opset_op('ReduceMin')
+    def reduce_min(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.min_reduce(data, axes=axes, keepdims=keepdims),)
+
+    @staticmethod
+    @opset_op('ReduceProd')
+    def reduce_prod(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.prod(data, axes=axes, keepdims=keepdims),)
+
+    @staticmethod
+    @opset_op('ReduceSum')
+    def reduce_sum(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.summation(data, axes=axes, keepdims=keepdims),)
+
+    @staticmethod
+    @opset_op('ReduceSumSquare')
+    def reduce_sum_square(unused_ctx, data, axes=None, keepdims=1):
+        if axes is None:
+            axes = range(data.shape.ndims)
+        if not isinstance(axes, (list, tuple)):
+            axes = tuple(axes)
+        return (op.summation(data * data, axes=axes, keepdims=keepdims),)
+
+    @staticmethod
     @opset_op('Selu')
-    def selu(data, alpha=1.6732, gamma=1.0507):
+    def selu(unused_ctx, data, alpha=1.6732, gamma=1.0507):
         return (Selu.function(data, alpha, gamma),)
 
     @staticmethod
     @opset_op('Shape')
-    def shape(data):
-        return (op.shape_of(data),)
+    def shape(unused_ctx, data):
+        return (op.cast(op.shape_of(data), plaidml.DType.INT64),)
 
     @staticmethod
     @opset_op('Sigmoid')
-    def sigmoid(value):
+    def sigmoid(unused_ctx, value):
         return (op.sigmoid(value),)
 
     @staticmethod
     @opset_op('Size')
-    def size(value):
-        return (op.prod(op.shape_of(value)),)
+    def size(unused_ctx, value):
+        return (op.cast(op.prod(op.shape_of(value)), plaidml.DType.INT64),)
 
     @staticmethod
     @opset_op('Slice')
-    def slice(data, axes=None, ends=None, starts=None):
+    def slice(unused_ctx, data, axes=None, ends=None, starts=None):
         return (op.slice_tensor(data, axes=axes, ends=ends, starts=starts),)
 
     @staticmethod
     @opset_op('Softmax')
-    def softmax(data, axis=None):
+    def softmax(unused_ctx, data, axis=None):
         return (op.softmax(data, axis=axis),)
 
     @staticmethod
     @opset_op('Softplus')
-    def softplus(data):
+    def softplus(unused_ctx, data):
         return (op.log(op.exp(data) + 1.),)
 
     @staticmethod
     @opset_op('Softsign')
-    def softsign(data):
+    def softsign(unused_ctx, data):
         return (data / (1 + abs(data)),)
 
     @staticmethod
     @opset_op('Split')
-    def split(value, axis, split=None):
+    def split(ctx, value, axis=None, split=None):
+        if axis is None:
+            axis = 0
         if split is None:
-            split = [value.shape.dims[axis] // 2] * 2
+            axis_len = value.shape.dims[axis]
+            group_size = axis_len // len(ctx.node.output)
+            split = [group_size] * len(ctx.node.output)
         axes = [slice(None, None) for n in range(value.shape.ndims)]
         prev = 0
         results = []
@@ -895,17 +1092,17 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Sqrt')
-    def sqrt(value):
-        return (op.sqrt(value),)
+    def sqrt(unused_ctx, value):
+        return (Sqrt.function(value),)
 
     @staticmethod
     @opset_op('Squeeze')
-    def squeeze(data, axes):
+    def squeeze(unused_ctx, data, axes):
         return (op.squeeze(data, axes),)
 
     @staticmethod
     @opset_op('Sub')
-    def sub(a, b, axis=None, broadcast=None):
+    def sub(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
             raise tile.LogicError('Incompatible shapes in subtraction')
         if broadcast and (axis is not None):
@@ -914,34 +1111,34 @@ class _V1(object):
 
     @staticmethod
     @opset_op('Sum')
-    def sum(*args):
+    def sum(unused_ctx, *args):
         return (functools.reduce(lambda x, y: x + y, args),)
 
     @staticmethod
     @opset_op('Tanh')
-    def tanh(value):
+    def tanh(unused_ctx, value):
         return (op.tanh(value),)
 
     @staticmethod
     @opset_op('ThresholdedRelu')
-    def thresholded_relu(data, alpha=1.):
+    def thresholded_relu(unused_ctx, data, alpha=1.):
         return (ThresholdedRelu.function(data, alpha),)
 
     @staticmethod
     @opset_op('Transpose')
-    def transpose(data, perm=None):
+    def transpose(unused_ctx, data, perm=None):
         return (Transpose.function(data, perm=perm),)
 
     @staticmethod
     @opset_op('Unsqueeze')
-    def unsqueeze(data, axes):
+    def unsqueeze(unused_ctx, data, axes):
         return (op.unsqueeze(data, axes),)
 
     @staticmethod
     @opset_op('Xor')
-    def xor(a, b, axis=None, broadcast=None):
+    def xor(unused_ctx, a, b, axis=None, broadcast=None):
         if not broadcast and a.shape.dims != b.shape.dims:
-            raise tile.LogicError('Incompatible shapes in subtraction')
+            raise tile.LogicError('Incompatible shapes in exclusive-or')
         if broadcast and (axis is not None):
             b = op.reshape(b, list(b.shape.dims) + ([1] * (a.shape.ndims - b.shape.ndims - axis)))
         return (a ^ b,)
@@ -952,7 +1149,7 @@ class _V2(_V1):
 
     @staticmethod
     @opset_op('Pad')
-    def pad(data, mode=None, pads=None, value=None):
+    def pad(unused_ctx, data, mode=None, pads=None, value=None):
         if not mode:
             mode = 'constant'
             padding_mode = PadConstant
@@ -978,7 +1175,7 @@ class _V4(_V3):
 
     @staticmethod
     @opset_op('Concat')
-    def concat(*inputs, **kwargs):
+    def concat(unused_ctx, *inputs, **kwargs):
         try:
             axis = kwargs['axis']
         except KeyError:
@@ -988,13 +1185,108 @@ class _V4(_V3):
 
 @opset('', 5)
 class _V5(_V4):
-    pass
+
+    @staticmethod
+    @opset_op('Reshape')
+    def reshape(unused_ctx, data, shape):
+        # Reshape V5 takes its shape as a tensor.  This is tricky to implement -- there's no good
+        # way to provide constant values to the reshape() operation until all inputs are actually
+        # bound.  Once inputs have been bound, we could construct a program whose output is the
+        # one-dimensional shape tensor, run it, read the result, and use that to build the
+        # correct reshape() operation for the actual program we want to run.  But note that
+        # changing the input tensor may require recompiling the program, which is somewhat against
+        # PlaidML's model.  So this needs some further thought.
+        raise NotImplementedError(
+            'Version-5 reshape() is not yet implemented by the PlaidML ONNX backend')
 
 
-OPSETS = [_V1, _V2, _V3, _V4, _V5]
+@opset('', 6)
+class _V6(_V5):
+
+    @staticmethod
+    @opset_op('Cast')
+    def cast(unused_ctx, x, to):
+        dtype = opset_util.ONNX_DTYPE_TO_PLAIDML[to]
+        return (op.cast(x, dtype),)
+
+
+@opset('', 7)
+class _V7(_V6):
+
+    @classmethod
+    @opset_op('Add')
+    def add(cls, ctx, a, b):
+        return super(_V7, cls).add(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('And')
+    def and_op(cls, ctx, a, b):
+        return super(_V7, cls).and_op(ctx, a, b, broadcast=True)
+
+    @staticmethod
+    @opset_op('Cos')
+    def cos(unused_ctx, x):
+        return (op.cos(x),)
+
+    @classmethod
+    @opset_op('Div')
+    def div(cls, ctx, a, b):
+        return super(_V7, cls).div(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('Equal')
+    def equal(cls, ctx, a, b):
+        return super(_V7, cls).equal(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('Greater')
+    def greater(cls, ctx, a, b):
+        return super(_V7, cls).greater(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('Less')
+    def less(cls, ctx, a, b):
+        return super(_V7, cls).less(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('Mul')
+    def mul(cls, ctx, a, b):
+        return super(_V7, cls).mul(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('Or')
+    def or_op(cls, ctx, a, b):
+        return super(_V7, cls).or_op(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('Pow')
+    def pow(cls, ctx, a, b):
+        return super(_V7, cls).pow(ctx, a, b, broadcast=True)
+
+    @staticmethod
+    @opset_op('PRelu')
+    def prelu(unused_ctx, x, slope):
+        # N.B. According to the operator specification, this is the V6 behavior of PRelu.
+        # The ONNX backend tests, however, expect that at V6, the V1 operator behavior will be used
+        # (broadcasting a one-dimensional slope to the channels dimension of the input tensor);
+        # at V7, they expect the unidirectional broadcast behavior (implemented by this method).
+        return (op.relu(x, alpha=slope),)
+
+    @classmethod
+    @opset_op('Sub')
+    def sub(cls, ctx, a, b):
+        return super(_V7, cls).sub(ctx, a, b, broadcast=True)
+
+    @classmethod
+    @opset_op('Xor')
+    def xor(cls, ctx, a, b):
+        return super(_V7, cls).xor(ctx, a, b, broadcast=True)
+
+
+OPSETS = [_V1, _V2, _V3, _V4, _V5, _V6, _V7]
 
 # As a special case for the ONNX operator set, we define a default version:
 # this is the version of the ONNX operator set that will be loaded when there
 # is no operator set defined by the model.  It should typically be the highest
 # version of the operator set defined by this module.
-DEFAULT_VERSION = 5
+DEFAULT_VERSION = 7

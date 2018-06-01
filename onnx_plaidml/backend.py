@@ -15,7 +15,7 @@ import struct
 
 import numpy as np
 import onnx.backend.base
-from onnx import onnx_pb2
+from onnx import onnx_pb
 import onnx_plaidml
 from onnx_plaidml import opset_onnx
 from onnx_plaidml import opset_util
@@ -51,7 +51,7 @@ def _load_ops(opset_ids=None):
     """Builds the operator ID dictionary to use for a model.
     
     Args:
-        opset_ids ([onnx_pb2.OperatorSetIdProto]): The operator sets imported by the model.
+        opset_ids ([onnx_pb.OperatorSetIdProto]): The operator sets imported by the model.
     
     Returns:
         (domain, operator_name) -> function: The map from (domain, operator name) to operator
@@ -59,7 +59,7 @@ def _load_ops(opset_ids=None):
     """
     versions = defaultdict(int)
     if not opset_ids:
-        opset_id = onnx_pb2.OperatorSetIdProto()
+        opset_id = onnx_pb.OperatorSetIdProto()
         opset_id.domain = ''
         opset_id.version = opset_onnx.DEFAULT_VERSION
         opset_ids = [opset_id]
@@ -87,16 +87,16 @@ def _load_ops(opset_ids=None):
 
 # Translations from ONNX attributes to protobuf field getters.
 _ONNX_ATTRTYPE_TO_GETTER = {
-    onnx_pb2.AttributeProto.FLOAT: operator.attrgetter('f'),
-    onnx_pb2.AttributeProto.INT: operator.attrgetter('i'),
-    onnx_pb2.AttributeProto.STRING: operator.attrgetter('s'),
-    onnx_pb2.AttributeProto.TENSOR: operator.attrgetter('t'),
-    onnx_pb2.AttributeProto.GRAPH: operator.attrgetter('g'),
-    onnx_pb2.AttributeProto.FLOATS: operator.attrgetter('floats'),
-    onnx_pb2.AttributeProto.INTS: operator.attrgetter('ints'),
-    onnx_pb2.AttributeProto.STRINGS: operator.attrgetter('strings'),
-    onnx_pb2.AttributeProto.TENSORS: operator.attrgetter('tensors'),
-    onnx_pb2.AttributeProto.GRAPHS: operator.attrgetter('graphs'),
+    onnx_pb.AttributeProto.FLOAT: operator.attrgetter('f'),
+    onnx_pb.AttributeProto.INT: operator.attrgetter('i'),
+    onnx_pb.AttributeProto.STRING: operator.attrgetter('s'),
+    onnx_pb.AttributeProto.TENSOR: operator.attrgetter('t'),
+    onnx_pb.AttributeProto.GRAPH: operator.attrgetter('g'),
+    onnx_pb.AttributeProto.FLOATS: operator.attrgetter('floats'),
+    onnx_pb.AttributeProto.INTS: operator.attrgetter('ints'),
+    onnx_pb.AttributeProto.STRINGS: operator.attrgetter('strings'),
+    onnx_pb.AttributeProto.TENSORS: operator.attrgetter('tensors'),
+    onnx_pb.AttributeProto.GRAPHS: operator.attrgetter('graphs'),
 }
 
 
@@ -136,13 +136,20 @@ class PlaidMLBackendRep(onnx.backend.base.BackendRep):
             val = tile.Value.from_python_value(inp, ctx=self._ctx, dev=self._dev).var
             self._invoker.set_input(_as_input_id(valinfo.name), val)
         outputs = []
+        all_zero_outputs = True
         for valinfo in self._model.graph.output:
             shape = self._invoker.get_output_shape(_as_output_id(valinfo.name))
+            for d in shape.dimensions:
+                if d.size == 0:
+                    break
+            else:
+                all_zero_outputs = False
             output = plaidml.Tensor(self._dev, shape)
             outputs.append(output)
             self._invoker.set_output(_as_output_id(valinfo.name), output)
 
-        self._invoker.invoke()
+        if not all_zero_outputs:
+            self._invoker.invoke()
 
         return [output.as_ndarray(self._ctx) for output in outputs]
 
@@ -153,23 +160,10 @@ class PlaidMLBackend(onnx.backend.base.Backend):
     ops = opset_onnx.OPSETS
 
     @classmethod
-    def prepare(cls, model, device=None, **kwargs):
-        if device is None:
-            device = cls._get_default_device()
-        return super(PlaidMLBackend, cls).prepare(model, device=device, **kwargs)
-
-    @classmethod
     def run_model(cls, model, inputs, device=None, **kwargs):
         if device is None:
             device = cls._get_default_device()
         return super(PlaidMLBackend, cls).run_model(model, device=device, **kwargs)
-
-    @classmethod
-    def run_node(cls, node, inputs, device=None, outputs_info=None, **kwargs):
-        if device is None:
-            device = cls._get_default_device()
-        return super(PlaidMLBackend, cls).run_node(
-            node, inputs, device=device, output_info=outputs_info, **kwargs)
 
     @classmethod
     def _get_default_device(cls):
@@ -233,7 +227,7 @@ class PlaidMLBackend(onnx.backend.base.Backend):
                     '"{}"/"{}" is not implemented by the PlaidML ONNX backend'.format(
                         node.domain, node.op_type)), None)
 
-        output_vars = operation(*input_vars, **attrs)
+        output_vars = operation(opset_util.Context(node), *input_vars, **attrs)
 
         for (name, var) in zip(node.output, output_vars):
             bindings[name] = var

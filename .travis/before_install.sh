@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash -x
 
 mkdir -p $HOME/.cache/eggs
 ln -s $HOME/.cache/eggs .eggs
